@@ -4,3 +4,6 @@ pandas
 scikit-learn
 pymongo
 gunicorn 
+qdrant-client 
+sentence-transformers
+python-dotenv
