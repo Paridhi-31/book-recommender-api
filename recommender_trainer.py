@@ -5,6 +5,7 @@ from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
@@ -32,7 +33,7 @@ def train_and_upload():
     client = QdrantClient(
         url=os.getenv("QDRANT_URL"), 
         api_key=os.getenv("QDRANT_API_KEY"),
-        timeout=60 
+        timeout=100 # Increased further for stability
     )
 
     # 2. MODERNIZED COLLECTION CREATION
@@ -42,35 +43,43 @@ def train_and_upload():
             collection_name="books",
             vectors_config=VectorParams(size=384, distance=Distance.COSINE),
         )
-    
-        # ADD THESE LINES HERE:
         client.create_payload_index("books", "slug", models.PayloadSchemaType.KEYWORD)
         client.create_payload_index("books", "book_id", models.PayloadSchemaType.KEYWORD)
-    else:
-        print("Collection 'books' already exists. Skipping creation.")
+    
+    # --- RESUME LOGIC ---
+    # Check how many points exist to skip them
+    collection_info = client.get_collection("books")
+    points_count = collection_info.points_count
+    print(f"Collection already has {points_count} books. Skipping ahead...")
 
-    # 3. REDUCED BATCH SIZE: Send 100 points per request to prevent timeouts
     points = []
     batch_size = 100 
     
-    print(f"Starting upload for {len(df)} books...")
-    for idx, row in df.iterrows():
-        vector = encoder.encode(row['soup']).tolist()
-        points.append(PointStruct(
-            id=idx, 
-            vector=vector, 
-            payload={
-                "book_id": row['book_id'], 
-                "title": row['title'], 
-                "slug": row.get('slug', ''),
-                "author": row['author']
-            }
-        ))
-        
-        if len(points) >= batch_size:
-            client.upsert(collection_name="books", points=points)
-            print(f"Uploaded {idx + 1} / {len(df)} books...")
-            points = []
+    # Start loop from where we left off
+    for idx, row in df.iloc[points_count:].iterrows():
+        try:
+            vector = encoder.encode(row['soup']).tolist()
+            points.append(PointStruct(
+                id=idx, # Use idx to match your previous upload logic
+                vector=vector, 
+                payload={
+                    "book_id": row['book_id'], 
+                    "title": row['title'], 
+                    "slug": row.get('slug', ''),
+                    "author": row['author']
+                }
+            ))
+            
+            if len(points) >= batch_size:
+                client.upsert(collection_name="books", points=points)
+                print(f"Uploaded {idx + 1} / {len(df)} books...")
+                points = []
+                
+        except Exception as e:
+            print(f"Error at index {idx}: {e}")
+            print("Waiting 5 seconds before retrying...")
+            time.sleep(5)
+            continue
     
     if points: 
         client.upsert(collection_name="books", points=points)
