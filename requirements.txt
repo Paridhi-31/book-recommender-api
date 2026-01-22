@@ -7,3 +7,4 @@ gunicorn
 qdrant-client 
 sentence-transformers
 python-dotenv
+cachetools
